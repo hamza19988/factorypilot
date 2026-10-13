@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+data/mvtec/
+data/logs/
+data/*.db
+var/
+.venv/

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FactoryPilot</title>
+<meta name="description" content="Photo + sensor log → diagnosis → work order. Maintenance agent running an open VLM on AMD Instinct.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231D2321'/%3E%3Cpath d='M7 23V9h12M7 16h9' stroke='%23F2C230' stroke-width='3.5' fill='none'/%3E%3Ccircle cx='23' cy='21' r='3.5' fill='%23F2C230'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6"/><path d="M7 23V9h12M7 16h9"/><circle cx="23" cy="21" r="3.5"/></svg>
+    <div>
+      <div class="brand-name">FactoryPilot</div>
+      <div class="brand-sub">Plant Rome-01 · Shift A</div>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" data-tab="floor" aria-selected="true">Floor</button>
+    <button role="tab" data-tab="inspect" aria-selected="false">Inspect</button>
+    <button role="tab" data-tab="orders" aria-selected="false">Work orders <span class="badge" id="approvalBadge" hidden></span></button>
+    <button role="tab" data-tab="copilot" aria-selected="false">Copilot</button>
+    <button role="tab" data-tab="system" aria-selected="false">System</button>
+  </nav>
+  <div class="status-pills">
+    <span class="pill" id="pillAmd" title="Reasoning backend"><i></i><b>Model</b><span>…</span></span>
+    <span class="pill" id="pillEvolus" title="Evolus integration"><i></i><b>Evolus</b><span>…</span></span>
+    <time class="clock" id="clock"></time>
+  </div>
+</header>
+
+<main>
+  <!-- ============ FLOOR ============ -->
+  <section class="view" id="view-floor" data-view="floor">
+    <div class="floor-head">
+      <h1>Floor overview</h1>
+      <p class="lede">Live condition of every machine. Colour appears only when something is abnormal.</p>
+    </div>
+    <div class="plates" id="plates" aria-live="polite"></div>
+    <div class="machine-detail" id="machineDetail"></div>
+  </section>
+
+  <!-- ============ INSPECT ============ -->
+  <section class="view" id="view-inspect" data-view="inspect" hidden>
+    <div class="inspect-grid">
+      <form class="panel intake" id="intake">
+        <h2>New inspection</h2>
+        <label class="field">
+          <span>Machine</span>
+          <select name="machine" id="machineSelect"></select>
+        </label>
+        <div class="field">
+          <span>Photo</span>
+          <div class="samples" id="samples"></div>
+          <label class="drop" id="drop">
+            <input type="file" name="image" id="imageInput" accept="image/*" capture="environment">
+            <span id="dropText">Drop a photo here or <u>browse</u></span>
+          </label>
+        </div>
+        <fieldset class="field">
+          <legend>Sensor data</legend>
+          <div class="seg">
+            <label><input type="radio" name="logsrc" value="live" checked><span>Live feed</span></label>
+            <label><input type="radio" name="logsrc" value="upload"><span>Upload CSV</span></label>
+            <label><input type="radio" name="logsrc" value="none"><span>None</span></label>
+          </div>
+          <input type="file" name="logs" id="logsInput" accept=".csv,text/csv" hidden>
+        </fieldset>
+        <label class="field">
+          <span>Operator note <em>optional</em></span>
+          <input name="note" placeholder="e.g. parts coming out marked since 10:00" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Work order language</span>
+          <select name="language">
+            <option>English</option><option>Italiano</option><option>Español</option><option>Deutsch</option><option>Français</option>
+          </select>
+        </label>
+        <button class="btn primary big" id="runBtn" type="submit">Run diagnosis</button>
+        <p class="hint" id="backendHint"></p>
+      </form>
+
+      <div class="panel trace-panel">
+        <div class="panel-head">
+          <h2>Agent trace</h2>
+          <span class="muted" id="traceMeta"></span>
+        </div>
+        <ol class="trace" id="trace">
+          <li class="trace-empty">Pick a machine and a photo, then run a diagnosis. Each step the agent takes shows up here as it happens.</li>
+        </ol>
+        <pre class="tokens" id="tokens" hidden></pre>
+      </div>
+
+      <div class="panel result" id="result">
+        <div class="result-empty">
+          <svg viewBox="0 0 120 80" aria-hidden="true"><rect x="6" y="10" width="108" height="60" rx="8"/><circle cx="22" cy="24" r="5"/><circle cx="98" cy="24" r="5"/><circle cx="22" cy="56" r="5"/><circle cx="98" cy="56" r="5"/><path d="M40 30 L80 46"/></svg>
+          <p>The diagnosis, the evidence behind it and the work order will appear here.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ORDERS ============ -->
+  <section class="view" id="view-orders" data-view="orders" hidden>
+    <div class="orders-head">
+      <h1>Work orders</h1>
+      <div class="seg" id="orderFilter">
+        <label><input type="radio" name="of" value="all" checked><span>All</span></label>
+        <label><input type="radio" name="of" value="awaiting_approval"><span>Needs approval</span></label>
+        <label><input type="radio" name="of" value="dispatched"><span>Dispatched</span></label>
+        <label><input type="radio" name="of" value="closed"><span>Closed</span></label>
+      </div>
+    </div>
+    <div class="orders-grid">
+      <div class="panel order-list" id="orderList"></div>
+      <div class="panel order-detail" id="orderDetail"><p class="muted pad">Select a work order to see the evidence, actions and history.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ COPILOT ============ -->
+  <section class="view" id="view-copilot" data-view="copilot" hidden>
+    <div class="copilot">
+      <div class="panel chat">
+        <div class="panel-head">
+          <h2>Ask about the floor</h2>
+          <label class="inline">Context
+            <select id="chatMachine"><option value="">Whole plant</option></select>
+          </label>
+        </div>
+        <div class="messages" id="messages">
+          <div class="suggest" id="suggest">
+            <button type="button">Why is Conveyor C2 vibrating more?</button>
+            <button type="button">How do I replace the drive-end bearing safely?</button>
+            <button type="button">Which work orders need my approval?</button>
+            <button type="button">Qual è la coppia di serraggio dei bulloni M8 sulla linea L3?</button>
+          </div>
+        </div>
+        <form class="composer" id="composer">
+          <input id="question" placeholder="Ask a question about a machine, a manual or an order" autocomplete="off">
+          <button class="btn primary" type="submit">Ask</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SYSTEM ============ -->
+  <section class="view" id="view-system" data-view="system" hidden>
+    <h1>System</h1>
+    <div class="system-grid">
+      <div class="panel" id="sysModel"></div>
+      <div class="panel" id="sysEvolus"></div>
+      <div class="panel wide" id="sysMetrics"></div>
+      <div class="panel wide" id="sysBench"></div>
+    </div>
+    <div class="sys-actions">
+      <button class="btn" id="resetDemo" type="button">Reset demo data</button>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# Default:            docker compose up --build            -> app only (offline demo, or points at VLLM_BASE_URL)
+# Full stack on AMD:  docker compose --profile amd up -d   -> app + vLLM on the local Instinct GPU (ROCm)
+services:
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "7860:7860"
+    volumes:
+      - fp-data:/app/var
+    environment:
+      DB_PATH: /app/var/factorypilot.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  vllm:
+    profiles: ["amd"]
+    image: rocm/vllm:latest
+    command: >
+      vllm serve ${MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+      --served-model-name factorypilot-vl --host 0.0.0.0 --port 8000
+      --api-key ${VLLM_API_KEY:?set VLLM_API_KEY}
+      --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.90
+      --limit-mm-per-prompt '{"image": 4}' --enable-prefix-caching
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add: ["video"]
+    ipc: host
+    shm_size: 16g
+    security_opt: ["seccomp=unconfined"]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  fp-data:
+  hf-cache:
